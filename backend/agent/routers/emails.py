@@ -1,7 +1,10 @@
 """Admin email review: edit automatic customer emails before they send, or write new ones from templates."""
 import json
 
+import base64
+
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -9,7 +12,8 @@ from ..auth import require_admin
 from ..db import get_db
 from ..email_templates import email_templates
 from ..models import Notification, ProductRequest
-from ..notify import build_attachments, deliver, email_html
+from ..notify import (ATTACHMENT_KINDS, build_attachment_file, build_attachments, compose_email, deliver,
+                      email_enabled, email_from)
 from ..schemas import EmailDraftBrief, EmailIn, EmailPreviewIn, EmailTemplateOut, EmailUpdate, NotificationOut
 
 router = APIRouter(prefix="/admin", tags=["admin-emails"], dependencies=[Depends(require_admin)])
@@ -94,8 +98,49 @@ def discard_email(notification_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/emails/preview")
-def preview_email(body: EmailPreviewIn):
-    return {"html": email_html(body.body)}
+def preview_email(body: EmailPreviewIn, db: Session = Depends(get_db)):
+    """Exactly what the customer will receive: sender, recipient, subject, the HTML and plain-text
+    versions, and the attachments as they would be built right now (same code path as sending)."""
+    to, request_id = "", body.request_id
+    if body.notification_id is not None:
+        n = db.get(Notification, body.notification_id)
+        if n is None:
+            raise HTTPException(404, "Email not found")
+        to, request_id = n.to_address, n.request_id
+    elif request_id is not None:
+        to = _req(db, request_id).user.email
+    warnings = []
+    try:
+        msg = compose_email(db, to, body.subject, body.body, request_id, body.attachments)
+    except ValueError as exc:
+        warnings.append(f"Attachment problem: {exc}. Untick it or fix it before sending.")
+        msg = compose_email(db, to, body.subject, body.body, request_id, [])
+    if not email_enabled():
+        warnings.append("Email sending is not set up (RESEND_API_KEY / EMAIL_FROM), so this would be logged as "
+                        "skipped instead of sent.")
+    files = []
+    kinds = [k for k in body.attachments if k in ATTACHMENT_KINDS]
+    if len(msg["attachments"]) == len(kinds):
+        for kind, f in zip(kinds, msg["attachments"]):
+            files.append({"kind": kind, "filename": f["filename"],
+                          "size_bytes": len(base64.b64decode(f["content"]))})
+    return {"from": msg["from"] or email_from() or "(EMAIL_FROM not set)", "to": to, "reply_to": msg["reply_to"],
+            "subject": msg["subject"], "html": msg["html"], "text": msg["text"], "attachments": files,
+            "warnings": warnings}
+
+
+@router.get("/requests/{request_id}/attachments/{kind}")
+def attachment_file(request_id: int, kind: str, db: Session = Depends(get_db)):
+    """The exact PDF that would be attached to an email right now (opens inline for the preview)."""
+    req = _req(db, request_id)
+    if kind not in ATTACHMENT_KINDS:
+        raise HTTPException(404, "Unknown attachment")
+    try:
+        pdf, name = build_attachment_file(db, req.id, kind)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": f'inline; filename="{name}"'})
 
 
 @router.get("/email-drafts", response_model=list[EmailDraftBrief])

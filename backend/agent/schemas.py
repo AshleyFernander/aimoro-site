@@ -322,6 +322,10 @@ class EmailTemplateOut(BaseModel):
 
 class EmailPreviewIn(BaseModel):
     body: str = Field(max_length=20000)
+    subject: str = Field(default="", max_length=255)
+    attachments: list[AttachmentKind] = []
+    request_id: int | None = None       # new email for this request (recipient = the customer)
+    notification_id: int | None = None  # existing draft (recipient = its address)
 
 
 class EmailDraftBrief(BaseModel):
@@ -407,6 +411,51 @@ class AdminRequestUpdate(BaseModel):
     admin_notes: str | None = None
     tracking_number: str | None = None
     fee_waived: bool | None = None
+    # Request details (fix typos, change quantity or address). Only fields that are sent change.
+    product_name: str | None = Field(default=None, min_length=2, max_length=255)
+    description: str | None = Field(default=None, max_length=5000)
+    reference_url: str | None = Field(default=None, max_length=2000)
+    delivery_address: str | None = Field(default=None, max_length=2000)
+    quantity: int | None = Field(default=None, ge=1, le=100000)
+    target_price_bsd: float | None = Field(default=None, ge=0)  # send null to clear the budget
+
+
+class QuoteEditIn(BaseModel):
+    """Change a quote that was already sent (or chosen but not yet paid). Fields left out keep their value."""
+    listing_id: int | None = None
+    fx_cny_usd: float | None = Field(default=None, gt=0)
+    freight_cost_bsd: float | None = Field(default=None, ge=0)
+    freight_markup_pct: float | None = Field(default=None, ge=0, le=2)
+    insurance_bsd: float | None = Field(default=None, ge=0)
+    service_fee_pct: float | None = Field(default=None, ge=0, le=1)
+    service_fee_min_bsd: float | None = Field(default=None, ge=0)
+    message: str | None = Field(default=None, max_length=5000)
+    valid_days: int | None = Field(default=None, ge=1, le=90)  # restart the validity from today
+    notify: bool = False  # tell the customer: timeline update + an email draft for review
+
+
+class CustomerEditIn(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    email: str | None = None
+    phone: str | None = None
+    country: Literal["Bahamas", "United States", "Canada"] | None = None
+    island: str | None = Field(default=None, max_length=100)
+    address: str | None = Field(default=None, max_length=2000)
+
+    @field_validator("phone")
+    @classmethod
+    def _phone(cls, v):
+        return None if v is None else normalize_phone(v)
+
+    @field_validator("email")
+    @classmethod
+    def _email(cls, v):
+        if v is None:
+            return None
+        v = v.strip().lower()
+        if "@" not in v or "." not in v.split("@")[-1]:
+            raise ValueError("Enter a valid email")
+        return v
 
 
 ProposalIn.model_rebuild()

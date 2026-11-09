@@ -13,6 +13,7 @@ import { FlowSteps } from '@/components/agent/FlowSteps'
 import { OptionsBuilder } from '@/components/agent/OptionsBuilder'
 import { EmailCenter } from '@/components/agent/EmailCenter'
 import { WarehousePhotoUpload } from '@/components/agent/WarehousePhotos'
+import { CustomerEditor, RequestDetailsEditor, SentOptionsCard, editableQuotes } from '@/components/agent/AdminEdits'
 
 const EMPTY_LISTING = { platform: 'taobao', currency: 'CNY' as api.Currency, url: '', title: '', price_cny: '', china_shipping_cny: '', seller_rating: '', weight_kg: '', notes: '' }
 
@@ -61,6 +62,7 @@ function Workspace() {
   const [listing, setListing] = useState(EMPTY_LISTING)
 
   const [openView, setOpenView] = useState<number | null>(null)
+  const [editing, setEditing] = useState<'request' | 'customer' | null>(null)
 
   // admin fields
   const [notes, setNotes] = useState('')
@@ -123,7 +125,13 @@ function Workspace() {
         {/* Request + customer */}
         <div className="space-y-4">
           <Card>
-            <h2 className="font-bold text-slate-900 mb-2">Request</h2>
+            <div className="flex items-center justify-between mb-2">
+              <h2 className="font-bold text-slate-900">Request</h2>
+              {editing !== 'request' && <button type="button" className="text-xs font-semibold text-[#c40000]" onClick={() => setEditing('request')}>Edit</button>}
+            </div>
+            {editing === 'request' ? (
+              <RequestDetailsEditor req={req} onDone={async changed => { setEditing(null); if (changed) await load() }} />
+            ) : (
             <dl className="text-sm space-y-1">
               <div><dt className="inline text-slate-500">Qty: </dt><dd className="inline font-semibold">{req.quantity}</dd></div>
               {req.target_price_bsd != null && <div><dt className="inline text-slate-500">Budget: </dt><dd className="inline font-semibold">{bsd(req.target_price_bsd)}</dd></div>}
@@ -131,6 +139,7 @@ function Workspace() {
               {req.reference_url && <div className="break-all"><dt className="inline text-slate-500">Link: </dt><dd className="inline"><a className="text-[#c40000] underline" href={req.reference_url} target="_blank" rel="noopener noreferrer">{req.reference_url}</a></dd></div>}
               <div><dt className="inline text-slate-500">Received: </dt><dd className="inline">{shortDate(req.created_at)}</dd></div>
             </dl>
+            )}
             {photoUrl && <img src={photoUrl} alt="Customer photo" className="mt-3 max-h-56 rounded-xl border border-slate-100" />}
             {req.has_photo && (
               <button type="button" disabled={busy} className={`${secondaryBtn} mt-3 w-full !py-2 text-xs`}
@@ -150,7 +159,13 @@ function Workspace() {
             </div>
           </Card>
           <Card>
-            <h2 className="font-bold text-slate-900 mb-2">Customer</h2>
+            <div className="flex items-center justify-between mb-2">
+              <h2 className="font-bold text-slate-900">Customer</h2>
+              {editing !== 'customer' && <button type="button" className="text-xs font-semibold text-[#c40000]" onClick={() => setEditing('customer')}>Edit</button>}
+            </div>
+            {editing === 'customer' ? (
+              <CustomerEditor req={req} onDone={async changed => { setEditing(null); if (changed) await load() }} />
+            ) : (<>
             <p className="text-sm font-semibold">{req.customer.name}</p>
             <p className="text-sm text-slate-600">{req.customer.email}</p>
             {req.customer.phone && (
@@ -159,6 +174,7 @@ function Workspace() {
             )}
             <p className="text-sm text-slate-600">{locationText(req.customer)}</p>
             <p className="text-sm text-slate-600 whitespace-pre-wrap"><span className="text-slate-500">Deliver to: </span>{req.delivery_address || '—'}</p>
+            </>)}
           </Card>
           <Card>
             <h2 className="font-bold text-slate-900 mb-2">Status & shipping</h2>
@@ -181,7 +197,7 @@ function Workspace() {
           <Card>
             <h2 className="font-bold text-slate-900 mb-1">Sourcing <span className="text-xs font-semibold text-slate-400">(private)</span></h2>
             <p className="text-xs text-slate-500 mb-3">Paste what you find in the Taobao / Pinduoduo / 1688 apps. Prices in RMB (¥) or USD ($); RMB is converted to BSD at today's rate.
-              For each listing, click <b>Add photo &amp; specs</b> to upload its photo and fill in the comparison the customer sees.</p>
+              For each listing, click <b>Add photo &amp; specs</b> (or <b>Edit</b>) to upload its photo, fill in the comparison the customer sees, or fix the price and link.</p>
             {req.listings.length > 0 && (
               <div className="overflow-x-auto -mx-1 mb-4">
                 <table className="w-full text-sm">
@@ -189,7 +205,7 @@ function Workspace() {
                     <tr className="text-left text-xs text-slate-500 border-b border-slate-100">
                       <th className="py-2 px-1">Platform</th><th className="px-1">Item</th>
                       <th className="px-1 text-right">Price each</th><th className="px-1 text-right">China ship</th>
-                      <th className="px-1 text-right">≈ BSD each</th><th className="px-1">Rating</th><th className="px-1">Photo &amp; specs</th><th className="px-1" />
+                      <th className="px-1 text-right">≈ BSD each</th><th className="px-1">Rating</th><th className="px-1">Details</th><th className="px-1" />
                     </tr>
                   </thead>
                   <tbody>
@@ -211,7 +227,7 @@ function Workspace() {
                           <button type="button" aria-expanded={openView === l.id} onClick={() => setOpenView(openView === l.id ? null : l.id)}
                             className={`text-xs font-semibold whitespace-nowrap px-2.5 py-1 rounded-full border ${l.has_photo && l.specs.length
                               ? 'border-emerald-200 text-emerald-700 bg-emerald-50' : 'border-[#c40000] text-white bg-[#c40000]'}`}>
-                            {openView === l.id ? 'Close' : l.has_photo && l.specs.length ? 'Edit photo & specs ✓' : 'Add photo & specs'}
+                            {openView === l.id ? 'Close' : l.has_photo && l.specs.length ? 'Edit ✓' : 'Add photo & specs'}
                           </button>
                         </td>
                         <td className="px-1 text-right">
@@ -277,13 +293,21 @@ function Workspace() {
                 <button type="button" className={secondaryBtn} onClick={() => act(() => api.downloadOptionsPdf(req.id))}>Customer PDF</button>
               )}
             </div>
+            {editableQuotes(req).length > 0 && (
+              <div className="mb-5">
+                <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-2">{approved ? 'Chosen option' : 'Sent options'}</p>
+                <SentOptionsCard req={req} onChanged={load} />
+              </div>
+            )}
             {req.listings.length === 0 ? (
               <p className="text-sm text-slate-500">Add at least one listing first.</p>
             ) : !canQuote ? (
-              <p className="text-sm text-slate-500">{approved ? 'The customer approved a quote.' : `This request can't be quoted while its status is “${STATUS_LABELS[req.status]}”.`}</p>
+              <p className="text-sm text-slate-500">{approved ? (req.invoice?.status === 'paid' ? 'The customer chose an option and paid.' : 'The customer chose an option. You can still edit it above until the invoice is paid.') : `This request can't be quoted while its status is “${STATUS_LABELS[req.status]}”.`}</p>
             ) : (
               <>
-                <p className="text-xs text-slate-500 mb-3">Send 1 to 3 options. The customer sees each one next to what they asked for and chooses one.</p>
+                <p className="text-xs text-slate-500 mb-3">{editableQuotes(req).length > 0
+                  ? 'Or send a new set of 1 to 3 options (replaces the ones above).'
+                  : 'Send 1 to 3 options. The customer sees each one next to what they asked for and chooses one.'}</p>
                 <OptionsBuilder req={req} onSent={load} />
               </>
             )}

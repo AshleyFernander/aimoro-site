@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import * as api from '@/lib/agent'
-import { ATTACHMENT_LABELS, dateTime, type AttachmentKind, type EmailTemplate, type NotificationLog } from '@/lib/agent'
+import { ATTACHMENT_LABELS, dateTime, fileSize, type AttachmentKind, type EmailPreview, type EmailTemplate, type NotificationLog } from '@/lib/agent'
 import { Card, ErrorNote, inputClass, labelClass, primaryBtn, secondaryBtn } from './ui'
 
 interface Draft { subject: string; body: string; attachments: AttachmentKind[] }
@@ -46,7 +46,7 @@ export function EmailCenter({ req, onChanged }: { req: api.AdminRequest; onChang
       <ErrorNote message={error} />
 
       {drafts.map(d => (
-        <EmailEditor key={d.id} req={req} heading="Waiting for your review" note="This automatic email has not been sent. Edit it, then send it, or discard it."
+        <EmailEditor key={d.id} req={req} notificationId={d.id} heading="Waiting for your review" note="This automatic email has not been sent. Edit it, then send it, or discard it."
           initial={{ subject: d.subject, body: d.body, attachments: d.attachments }} templates={templates}
           onSave={async v => { await api.updateEmail(d.id, v); await onChanged() }}
           onSend={async v => { await api.updateEmail(d.id, v); await api.sendEmail(d.id); await onChanged() }}
@@ -97,8 +97,8 @@ export function EmailCenter({ req, onChanged }: { req: api.AdminRequest; onChang
   )
 }
 
-function EmailEditor({ req, heading, note, initial, templates, onSave, onSend, onDiscard, discardLabel = 'Discard' }: {
-  req: api.AdminRequest; heading: string; note?: string; initial: Draft; templates: EmailTemplate[] | null
+function EmailEditor({ req, notificationId, heading, note, initial, templates, onSave, onSend, onDiscard, discardLabel = 'Discard' }: {
+  req: api.AdminRequest; notificationId?: number; heading: string; note?: string; initial: Draft; templates: EmailTemplate[] | null
   onSave: (d: Draft) => Promise<void>; onSend: (d: Draft) => Promise<void>; onDiscard: () => Promise<void>
   discardLabel?: string
 }) {
@@ -106,7 +106,7 @@ function EmailEditor({ req, heading, note, initial, templates, onSave, onSend, o
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [confirmSend, setConfirmSend] = useState(false)
-  const [preview, setPreview] = useState<string | null>(null)
+  const [preview, setPreview] = useState<EmailPreview | null>(null)
 
   async function run(fn: () => Promise<void>) {
     setBusy(true); setError(null)
@@ -165,7 +165,10 @@ function EmailEditor({ req, heading, note, initial, templates, onSave, onSend, o
           <button disabled={busy || !d.subject.trim() || !d.body.trim()} className={primaryBtn} onClick={() => setConfirmSend(true)}>Send</button>
         )}
         <button disabled={busy} className={secondaryBtn}
-          onClick={() => run(async () => setPreview((await api.previewEmail(d.body)).html))}>Preview</button>
+          onClick={() => run(async () => setPreview(await api.previewEmail({
+            subject: d.subject, body: d.body, attachments: d.attachments,
+            ...(notificationId ? { notification_id: notificationId } : { request_id: req.id }),
+          })))}>Preview</button>
         <button disabled={busy || !d.subject.trim() || !d.body.trim()} className={secondaryBtn} onClick={() => run(() => onSave(d))}>Save draft</button>
         {req.customer.phone && (
           <a className={`${secondaryBtn} !border-emerald-300 !text-emerald-700`} target="_blank" rel="noopener noreferrer"
@@ -177,24 +180,112 @@ function EmailEditor({ req, heading, note, initial, templates, onSave, onSend, o
       </div>
 
       {preview !== null && (
-        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setPreview(null)}>
-          <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200">
-              <div className="min-w-0">
-                <p className="text-xs text-slate-500">Preview</p>
-                <p className="font-bold text-slate-900 truncate">{d.subject}</p>
-              </div>
-              <button className={secondaryBtn} onClick={() => setPreview(null)}>Close</button>
-            </div>
-            <iframe title="Email preview" srcDoc={preview} className="w-full flex-1 min-h-[60vh] bg-[#F1F5F9]" />
-            {d.attachments.length > 0 && (
-              <p className="px-4 py-2 text-xs text-slate-600 border-t border-slate-200">
-                Attached: {d.attachments.map(a => ATTACHMENT_LABELS[a]).join(', ')}
-              </p>
-            )}
-          </div>
-        </div>
+        <EmailPreviewModal req={req} preview={preview} busy={busy} onClose={() => setPreview(null)}
+          onSend={() => run(async () => { await onSend(d); setPreview(null) })} />
       )}
+    </div>
+  )
+}
+
+type PreviewTab = 'html' | 'text' | AttachmentKind
+
+/** Exactly what the customer receives: the same sender, recipient, subject, HTML, plain text and
+ *  PDF attachments that the server sends (built by the same code). */
+function EmailPreviewModal({ req, preview, busy, onClose, onSend }: {
+  req: api.AdminRequest; preview: EmailPreview; busy: boolean; onClose: () => void; onSend: () => void
+}) {
+  const [tab, setTab] = useState<PreviewTab>('html')
+  const [pdfUrl, setPdfUrl] = useState<string | null>(null)
+  const [pdfError, setPdfError] = useState<string | null>(null)
+  const [confirm, setConfirm] = useState(false)
+  const file = preview.attachments.find(a => a.kind === tab)
+
+  useEffect(() => {
+    if (!file) return
+    let url: string | null = null
+    setPdfUrl(null); setPdfError(null)
+    api.fetchFileUrl(api.attachmentPath(req.id, file.kind)).then(u => { url = u; setPdfUrl(u) }).catch(e => setPdfError(e.message))
+    return () => { if (url) URL.revokeObjectURL(url) }
+  }, [req.id, file])
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  const tabBtn = (key: PreviewTab, label: string) => (
+    <button key={key} type="button" onClick={() => setTab(key)}
+      className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold border ${tab === key
+        ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}>
+      {label}
+    </button>
+  )
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-2 sm:p-4" onClick={onClose}>
+      <div role="dialog" aria-label="Email preview" className="bg-white rounded-2xl w-full max-w-3xl h-[92vh] flex flex-col overflow-hidden"
+        onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-slate-200">
+          <p className="text-sm font-bold text-slate-900">Exactly what {req.customer.name.split(' ')[0]} will receive</p>
+          <button className={secondaryBtn} onClick={onClose}>Close</button>
+        </div>
+
+        <dl className="px-4 py-3 border-b border-slate-100 text-sm grid grid-cols-[72px_1fr] gap-x-3 gap-y-1">
+          <dt className="text-slate-500">From</dt><dd className="text-slate-800 break-all">{preview.from}</dd>
+          <dt className="text-slate-500">To</dt><dd className="text-slate-800 break-all">{preview.to || '—'}</dd>
+          <dt className="text-slate-500">Reply-to</dt><dd className="text-slate-800 break-all">{preview.reply_to}</dd>
+          <dt className="text-slate-500">Subject</dt><dd className="font-bold text-slate-900">{preview.subject || <span className="text-red-600">(no subject)</span>}</dd>
+          {preview.attachments.length > 0 && (<>
+            <dt className="text-slate-500">Attached</dt>
+            <dd className="flex flex-wrap gap-2">
+              {preview.attachments.map(a => (
+                <button key={a.kind} type="button" onClick={() => setTab(a.kind)}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-xs text-slate-700 hover:bg-slate-100">
+                  <span className="rounded bg-[#c40000] px-1 text-[9px] font-bold text-white">PDF</span>
+                  {a.filename} <span className="text-slate-400">({fileSize(a.size_bytes)})</span>
+                </button>
+              ))}
+            </dd>
+          </>)}
+        </dl>
+
+        {preview.warnings.length > 0 && (
+          <ul className="mx-4 mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 space-y-1">
+            {preview.warnings.map(w => <li key={w}>{w}</li>)}
+          </ul>
+        )}
+
+        <div className="flex gap-2 overflow-x-auto px-4 py-3">
+          {tabBtn('html', 'Email')}
+          {tabBtn('text', 'Plain-text version')}
+          {preview.attachments.map(a => tabBtn(a.kind, ATTACHMENT_LABELS[a.kind]))}
+        </div>
+
+        <div className="flex-1 min-h-0 border-t border-slate-100 bg-[#F1F5F9]">
+          {tab === 'html' && <iframe title="Email as the customer sees it" srcDoc={preview.html} className="w-full h-full" />}
+          {tab === 'text' && <pre className="h-full overflow-auto whitespace-pre-wrap bg-white p-4 text-sm text-slate-800 font-mono">{preview.text}</pre>}
+          {file && (pdfError ? <p className="p-4 text-sm text-red-600">{pdfError}</p>
+            : pdfUrl ? <iframe title={file.filename} src={pdfUrl} className="w-full h-full bg-white" />
+            : <p className="p-4 text-sm text-slate-500">Building {file.filename}…</p>)}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 px-4 py-3 border-t border-slate-200">
+          {file && pdfUrl && (
+            <a href={pdfUrl} download={file.filename} className={secondaryBtn}>Download {file.filename}</a>
+          )}
+          <span className="mr-auto" />
+          {confirm ? (
+            <>
+              <span className="text-sm text-slate-600">Send to {preview.to}?</span>
+              <button disabled={busy} className={primaryBtn} onClick={onSend}>Yes, send now</button>
+              <button disabled={busy} className={secondaryBtn} onClick={() => setConfirm(false)}>Not yet</button>
+            </>
+          ) : (
+            <button disabled={busy || !preview.subject.trim()} className={primaryBtn} onClick={() => setConfirm(true)}>Looks good, send</button>
+          )}
+        </div>
+      </div>
     </div>
   )
 }

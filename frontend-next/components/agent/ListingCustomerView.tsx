@@ -2,13 +2,19 @@
 
 import { useEffect, useState } from 'react'
 import * as api from '@/lib/agent'
-import { MATCH_LABELS, type MatchLevel, type SpecRow } from '@/lib/agent'
+import { CUR_SYMBOL, MATCH_LABELS, PLATFORMS, type Currency, type MatchLevel, type Platform, type SpecRow } from '@/lib/agent'
 import { ErrorNote, inputClass, labelClass, primaryBtn, secondaryBtn } from './ui'
 
 const STARTER_ROWS: SpecRow[] = ['Colour', 'Size', 'Material'].map(label => ({ label, requested: '', found: '', match: 'match' }))
 
 /** Admin editor for what the customer sees about one found product: photo, name, comparison, notes. */
 export function ListingCustomerView({ listing, onSaved }: { listing: api.Listing; onSaved: () => Promise<void> }) {
+  const optNum = (n: number | null) => (n == null ? '' : String(n))
+  const [sup, setSup] = useState({
+    platform: listing.platform, currency: listing.currency, url: listing.url, title: listing.title,
+    price: String(listing.price_cny), shipping: String(listing.china_shipping_cny),
+    rating: optNum(listing.seller_rating), weight: optNum(listing.weight_kg), notes: listing.notes,
+  })
   const [title, setTitle] = useState(listing.public_title)
   const [previewTitle, setPreviewTitle] = useState(listing.preview_title || '')
   const [notes, setNotes] = useState(listing.public_notes)
@@ -35,10 +41,11 @@ export function ListingCustomerView({ listing, onSaved }: { listing: api.Listing
 
   async function save() {
     await run(async () => {
+      const n = (v: string) => (v.trim() === '' ? null : Number(v))
       await api.updateListing(listing.id, {
-        platform: listing.platform, url: listing.url, title: listing.title,
-        currency: listing.currency, price_cny: listing.price_cny, china_shipping_cny: listing.china_shipping_cny,
-        seller_rating: listing.seller_rating, weight_kg: listing.weight_kg, notes: listing.notes,
+        platform: sup.platform, url: sup.url.trim(), title: sup.title.trim(),
+        currency: sup.currency, price_cny: Number(sup.price) || 0, china_shipping_cny: Number(sup.shipping) || 0,
+        seller_rating: n(sup.rating), weight_kg: n(sup.weight), notes: sup.notes.trim(),
         public_title: title.trim(), preview_title: previewTitle.trim(), public_notes: notes.trim(),
         specs: specs.filter(r => r.label.trim() && (r.requested.trim() || r.found.trim())),
       })
@@ -48,6 +55,29 @@ export function ListingCustomerView({ listing, onSaved }: { listing: api.Listing
 
   return (
     <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 space-y-4">
+      <details className="rounded-xl border border-slate-200 bg-white p-3" open={false}>
+        <summary className="cursor-pointer text-xs font-bold uppercase tracking-wide text-slate-500">Supplier details (private): price, link, notes</summary>
+        <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2">
+          <select aria-label="Platform" className={inputClass} value={sup.platform} onChange={e => setSup({ ...sup, platform: e.target.value as Platform })}>
+            {PLATFORMS.map(p => <option key={p} value={p}>{p}</option>)}
+          </select>
+          <select aria-label="Currency" className={inputClass} value={sup.currency} onChange={e => setSup({ ...sup, currency: e.target.value as Currency })}>
+            <option value="CNY">RMB (¥)</option><option value="USD">USD ($)</option>
+          </select>
+          <input aria-label="Price each" type="number" min={0} step="0.01" placeholder={`${CUR_SYMBOL[sup.currency]} price each`} className={inputClass}
+            value={sup.price} onChange={e => setSup({ ...sup, price: e.target.value })} />
+          <input aria-label="China shipping" type="number" min={0} step="0.01" placeholder={`${CUR_SYMBOL[sup.currency]} China shipping`} className={inputClass}
+            value={sup.shipping} onChange={e => setSup({ ...sup, shipping: e.target.value })} />
+          <input aria-label="Listing link" type="url" placeholder="Link" className={`${inputClass} col-span-2`} value={sup.url} onChange={e => setSup({ ...sup, url: e.target.value })} />
+          <input aria-label="Supplier title" placeholder="Title" className={inputClass} value={sup.title} onChange={e => setSup({ ...sup, title: e.target.value })} />
+          <div className="grid grid-cols-2 gap-2">
+            <input aria-label="Seller rating" type="number" min={0} max={5} step="0.1" placeholder="Rating" className={inputClass} value={sup.rating} onChange={e => setSup({ ...sup, rating: e.target.value })} />
+            <input aria-label="Weight kg" type="number" min={0} step="0.01" placeholder="kg" className={inputClass} value={sup.weight} onChange={e => setSup({ ...sup, weight: e.target.value })} />
+          </div>
+          <input aria-label="Private notes" placeholder="Private notes" className={`${inputClass} col-span-2 sm:col-span-4`} value={sup.notes} onChange={e => setSup({ ...sup, notes: e.target.value })} />
+        </div>
+        <p className="mt-2 text-[11px] text-slate-500">Changing the price doesn&apos;t change options already sent. After saving, open Edit on the option and save it to re-price.</p>
+      </details>
       <p className="text-xs font-bold uppercase tracking-wide text-slate-500">What the customer sees for this find</p>
       <div className="grid sm:grid-cols-[160px_1fr] gap-4">
         <div className="space-y-2">
@@ -111,7 +141,7 @@ export function ListingCustomerView({ listing, onSaved }: { listing: api.Listing
           </div>
           <ErrorNote message={error} />
           <div className="flex items-center gap-3">
-            <button type="button" disabled={busy} className={primaryBtn} onClick={save}>Save customer view</button>
+            <button type="button" disabled={busy} className={primaryBtn} onClick={save}>Save</button>
             {saved && <span className="text-xs font-semibold text-emerald-700">Saved</span>}
           </div>
         </div>

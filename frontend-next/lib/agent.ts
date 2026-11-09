@@ -329,8 +329,25 @@ export const adminSummary = () => request<Record<RequestStatus, number>>('/admin
 export const adminRequests = (status?: string) =>
   request<AdminRequest[]>(`/admin/requests${status ? `?status=${status}` : ''}`)
 export const adminRequest = (id: number) => request<AdminRequest>(`/admin/requests/${id}`)
-export const adminUpdateRequest = (id: number, body: Partial<Pick<AdminRequest, 'status' | 'admin_notes' | 'tracking_number' | 'fee_waived'>>) =>
+export type RequestEdit = Partial<Pick<AdminRequest, 'status' | 'admin_notes' | 'tracking_number' | 'fee_waived'
+  | 'product_name' | 'description' | 'reference_url' | 'delivery_address' | 'quantity' | 'target_price_bsd'>>
+export const adminUpdateRequest = (id: number, body: RequestEdit) =>
   request<AdminRequest>(`/admin/requests/${id}`, { method: 'PATCH', body: json(body) })
+
+/** Edit a sent option (or the chosen one before payment). Fields left out keep their value. */
+export interface QuoteEdit {
+  listing_id?: number; fx_cny_usd?: number; freight_cost_bsd?: number; freight_markup_pct?: number
+  insurance_bsd?: number; service_fee_pct?: number; service_fee_min_bsd?: number; message?: string
+  valid_days?: number; notify?: boolean
+}
+export const previewQuoteEdit = (quoteId: number, body: QuoteEdit) =>
+  request<QuotePreview & { before: { total_bsd: number; margin_bsd: number } }>(`/admin/quotes/${quoteId}/preview`, { method: 'POST', body: json(body) })
+export const editQuote = (quoteId: number, body: QuoteEdit) =>
+  request<AdminRequest>(`/admin/quotes/${quoteId}`, { method: 'PATCH', body: json(body) })
+
+export type CustomerEdit = Partial<Pick<AdminRequest['customer'], 'name' | 'email' | 'phone' | 'island' | 'address'>> & { country?: Country }
+export const editCustomer = (userId: number, body: CustomerEdit) =>
+  request<AdminRequest['customer']>(`/admin/customers/${userId}`, { method: 'PATCH', body: json(body) })
 export const updateListing = (id: number, body: ListingInput) =>
   request<Listing>(`/admin/listings/${id}`, { method: 'PATCH', body: json(body) })
 export const uploadListingPhoto = (id: number, file: File) => {
@@ -350,7 +367,15 @@ export const updateEmail = (id: number, body: { subject?: string; body?: string;
   request<NotificationLog>(`/admin/notifications/${id}`, { method: 'PATCH', body: json(body) })
 export const sendEmail = (id: number) => request<NotificationLog>(`/admin/notifications/${id}/send`, { method: 'POST' })
 export const discardEmail = (id: number) => request<NotificationLog>(`/admin/notifications/${id}/discard`, { method: 'POST' })
-export const previewEmail = (body: string) => request<{ html: string }>('/admin/emails/preview', { method: 'POST', body: json({ body }) })
+/** Exactly what the customer receives: same code path as sending, attachments included. */
+export interface EmailPreview {
+  from: string; to: string; reply_to: string; subject: string; html: string; text: string
+  attachments: { kind: AttachmentKind; filename: string; size_bytes: number }[]
+  warnings: string[]
+}
+export const previewEmail = (body: { subject: string; body: string; attachments: AttachmentKind[]; request_id?: number; notification_id?: number }) =>
+  request<EmailPreview>('/admin/emails/preview', { method: 'POST', body: json(body) })
+export const attachmentPath = (requestId: number, kind: AttachmentKind) => `/admin/requests/${requestId}/attachments/${kind}`
 export const emailDrafts = () => request<EmailDraftBrief[]>('/admin/email-drafts')
 /** Upload warehouse photos/videos with progress (0-100), since videos can be large. */
 export function uploadWarehousePhotos(requestId: number, files: File[], caption: string,

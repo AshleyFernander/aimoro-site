@@ -226,8 +226,28 @@ def build_attachments(db: Session, request_id: int | None, kinds: list[str]) -> 
     return files
 
 
+def build_attachment_file(db: Session, request_id: int, kind: str) -> tuple[bytes, str]:
+    """One attachment as raw PDF bytes + file name, exactly as it would be attached now."""
+    f = build_attachments(db, request_id, [kind])[0]
+    return base64.b64decode(f["content"]), f["filename"]
+
+
 def email_enabled() -> bool:
     return bool(os.getenv("RESEND_API_KEY") and os.getenv("EMAIL_FROM"))
+
+
+def email_from() -> str:
+    return os.getenv("EMAIL_FROM", "").strip()
+
+
+def compose_email(db: Session, to_address: str, subject: str, body: str, request_id: int | None,
+                  attachment_kinds: list[str]) -> dict:
+    """The exact message sent to Resend. deliver() and the admin preview both use this,
+    so the preview always matches what the customer receives.
+    Raises ValueError if an attachment can't be built yet."""
+    return {"from": email_from(), "to": [to_address], "subject": subject, "text": email_text(body),
+            "html": email_html(body), "reply_to": CONTACT_EMAIL,
+            "attachments": build_attachments(db, request_id, attachment_kinds)}
 
 
 def deliver(notification_id: int) -> None:
@@ -242,13 +262,12 @@ def deliver(notification_id: int) -> None:
             n.error = "Email not configured (set RESEND_API_KEY and EMAIL_FROM)"
         else:
             try:
+                payload = compose_email(db, n.to_address, n.subject, n.body, n.request_id,
+                                        json.loads(n.attachments or "[]"))
                 resp = httpx.post(
                     "https://api.resend.com/emails",
                     headers={"Authorization": f"Bearer {os.environ['RESEND_API_KEY']}"},
-                    json={"from": os.environ["EMAIL_FROM"], "to": [n.to_address],
-                          "subject": n.subject, "text": email_text(n.body),
-                          "html": email_html(n.body), "reply_to": CONTACT_EMAIL,
-                          "attachments": build_attachments(db, n.request_id, json.loads(n.attachments or "[]"))},
+                    json=payload,
                     timeout=30,
                 )
                 resp.raise_for_status()

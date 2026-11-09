@@ -14,7 +14,8 @@ from ..fx import get_cny_usd
 from ..models import PLATFORMS, REQUEST_STATUSES, Invoice, Notification, ProductRequest, Quote, SupplierListing, User
 from ..pricing import QuoteInputs, calculate_quote
 from ..schemas import (AdminEventOut, AdminQuoteOut, AdminRequestOut, AdminRequestUpdate, CustomerBrief,
-                       InvoiceOut, ListingIn, ListingOut, NotificationOut, ProposalIn, QuoteBuildIn)
+                       CustomerEditIn, InvoiceOut, ListingIn, ListingOut, NotificationOut, ProposalIn, QuoteBuildIn,
+                       QuoteEditIn)
 from .customer import mark_invoice_paid
 from ..notify import add_event, notify_customer
 
@@ -106,9 +107,41 @@ def unread_counts(db: Session = Depends(get_db)):
     }
 
 
+DETAIL_LABELS = {"product_name": "product", "description": "details", "reference_url": "link",
+                 "delivery_address": "delivery address", "quantity": "quantity", "target_price_bsd": "budget"}
+
+
 @router.patch("/requests/{request_id}", response_model=AdminRequestOut)
-def update_request(request_id: int, body: AdminRequestUpdate, db: Session = Depends(get_db)):
+def update_request(request_id: int, body: AdminRequestUpdate, background: BackgroundTasks,
+                   db: Session = Depends(get_db)):
     req = _get_req(db, request_id)
+    changed = []
+    for field in DETAIL_LABELS:
+        if field not in body.model_fields_set:
+            continue
+        value = getattr(body, field)
+        if field == "target_price_bsd":
+            pass  # null clears the budget
+        elif value is None:
+            continue
+        elif isinstance(value, str):
+            value = value.strip()
+        if value != getattr(req, field):
+            changed.append(field)
+            setattr(req, field, value)
+    if "quantity" in changed:
+        if any(q.invoice is not None and q.invoice.status == "paid" for q in req.quotes):
+            raise HTTPException(400, "This order is already paid, so the quantity can't change here.")
+        # Prices depend on quantity: re-price every option the customer can still choose or pay.
+        for q in _repriceable(req):
+            old = q.total_bsd
+            _reprice(db, req, q, QuoteEditIn())
+            if q.total_bsd != old:
+                add_event(db, req, "quote_edit", f"Option {q.option_number or 1} re-priced for quantity "
+                          f"{req.quantity}: ${old:,.2f} → ${q.total_bsd:,.2f}.", visible=False)
+    if changed:
+        add_event(db, req, "edit", "Request details edited by admin: " + ", ".join(DETAIL_LABELS[f] for f in changed)
+                  + ".", visible=False)
     if body.status is not None and body.status != req.status:
         if body.status not in REQUEST_STATUSES:
             raise HTTPException(400, f"Status must be one of: {', '.join(REQUEST_STATUSES)}")
@@ -327,6 +360,145 @@ def send_proposal(request_id: int, body: ProposalIn, background: BackgroundTasks
     req = _get_req(db, request_id)
     quotes = _send_options(req, body.options, body.message, background, db)
     return [AdminQuoteOut.model_validate(q) for q in quotes]
+
+
+# ---------- editing a quote after it was sent ----------
+
+def _repriceable(req: ProductRequest) -> list[Quote]:
+    """Options that can still change: sent, or chosen with an unpaid invoice."""
+    if req.status != "quote_ready":
+        return []
+    return [q for q in req.quotes if q.status == "sent" or (
+        q.status == "approved" and (q.invoice is None or q.invoice.status != "paid"))]
+
+
+def _editable_quote(db: Session, quote_id: int) -> tuple[ProductRequest, Quote]:
+    q = db.get(Quote, quote_id)
+    if q is None:
+        raise HTTPException(404, "Quote not found")
+    req = q.request
+    if q.invoice is not None and q.invoice.status == "paid":
+        raise HTTPException(400, "This quote is already paid and can't be changed")
+    if q not in _repriceable(req):
+        raise HTTPException(400, "Only the options the customer is looking at (or chose but hasn't paid) can be "
+                                 "edited. Send new options instead.")
+    return req, q
+
+
+def _reprice(db: Session, req: ProductRequest, q: Quote, body: QuoteEditIn):
+    """Apply the edits to q (in memory) and recalculate it. Returns the breakdown."""
+    listing = q.listing
+    if body.listing_id is not None and body.listing_id != q.listing_id:
+        listing = db.get(SupplierListing, body.listing_id)
+        if listing is None or listing.request_id != req.id:
+            raise HTTPException(400, "Pick a listing from this request")
+        if any(o.listing_id == listing.id for o in _repriceable(req) if o.id != q.id):
+            raise HTTPException(400, "That listing is already another option")
+    if listing is None:
+        raise HTTPException(400, "This quote has no listing; send new options instead")
+    if listing.currency == "USD":
+        fx = 1.0
+    elif body.fx_cny_usd is not None:
+        fx = body.fx_cny_usd
+    elif q.listing is not None and q.listing.currency != "USD" and q.fx_cny_usd != 1.0:
+        fx = q.fx_cny_usd  # keep the rate frozen on the quote
+    else:
+        fx = get_cny_usd()["rate"]
+    pick = lambda new, old: old if new is None else new  # noqa: E731
+    inputs = QuoteInputs(
+        price_cny=listing.price_cny, quantity=req.quantity, china_shipping_cny=listing.china_shipping_cny,
+        fx_cny_usd=fx,
+        freight_cost_bsd=pick(body.freight_cost_bsd, q.freight_cost_bsd),
+        freight_markup_pct=pick(body.freight_markup_pct, q.freight_markup_pct),
+        insurance_bsd=pick(body.insurance_bsd, q.insurance_bsd),
+        service_fee_pct=pick(body.service_fee_pct, q.service_fee_pct),
+        service_fee_min_bsd=pick(body.service_fee_min_bsd, q.service_fee_min_bsd),
+    )
+    b = calculate_quote(inputs)
+    q.listing_id, q.listing = listing.id, listing
+    q.fx_cny_usd, q.freight_cost_bsd, q.freight_markup_pct = fx, inputs.freight_cost_bsd, inputs.freight_markup_pct
+    q.insurance_bsd, q.service_fee_pct, q.service_fee_min_bsd = (inputs.insurance_bsd, inputs.service_fee_pct,
+                                                                  inputs.service_fee_min_bsd)
+    q.product_cost_bsd, q.shipping_bsd, q.service_fee_bsd = b.product_cost_bsd, b.shipping_bsd, b.service_fee_bsd
+    q.total_bsd, q.margin_bsd = b.total_bsd, b.margin_bsd
+    if body.message is not None:
+        q.message = body.message
+    if body.valid_days is not None:
+        q.expires_at = datetime.now(timezone.utc) + timedelta(days=body.valid_days)
+    if q.invoice is not None:
+        q.invoice.amount_bsd = q.total_bsd
+    for l in req.listings:
+        l.is_chosen = any(o.listing_id == l.id for o in _repriceable(req))
+    return b
+
+
+@router.post("/quotes/{quote_id}/preview")
+def preview_quote_edit(quote_id: int, body: QuoteEditIn, db: Session = Depends(get_db)):
+    """What the option would cost with these changes. Nothing is saved."""
+    req, q = _editable_quote(db, quote_id)
+    before = {"total_bsd": q.total_bsd, "margin_bsd": q.margin_bsd}
+    try:
+        b = _reprice(db, req, q, body)
+        fx = q.fx_cny_usd
+    finally:
+        db.rollback()  # discard the in-memory changes
+    return {"fx_cny_usd": fx, **b.as_dict(), "before": before}
+
+
+@router.patch("/quotes/{quote_id}", response_model=AdminRequestOut)
+def edit_quote(quote_id: int, body: QuoteEditIn, background: BackgroundTasks, db: Session = Depends(get_db)):
+    """Edit a sent option, or the chosen one before it's paid (its invoice follows the new total)."""
+    req, q = _editable_quote(db, quote_id)
+    old_total, old_listing = q.total_bsd, q.listing_id
+    _reprice(db, req, q, body)
+    n = q.option_number or 1
+    parts = []
+    if q.listing_id != old_listing:
+        parts.append("product changed")
+    if q.total_bsd != old_total:
+        parts.append(f"${old_total:,.2f} → ${q.total_bsd:,.2f}")
+    if body.valid_days is not None:
+        parts.append(f"valid until {q.expires_at:%b %d}")
+    add_event(db, req, "quote_edit", f"Option {n} edited by admin: {', '.join(parts) or 'no price change'}.",
+              visible=False)
+    if body.notify and parts:
+        bits = [f"Option {n} has been updated" if len(_repriceable(req)) > 1 or q.status == "sent"
+                else "Your quote has been updated"]
+        bits.append(f"the total is now ${q.total_bsd:,.2f} BSD")
+        if q.invoice is not None:
+            bits.append(f"invoice {q.invoice.number} has been updated to match")
+        if body.valid_days is not None:
+            bits.append(f"it is valid until {q.expires_at:%B} {q.expires_at.day}")
+        msg = bits[0] + ": " + ", ".join(bits[1:]) + "."
+        add_event(db, req, "quote", msg)
+        notification = notify_customer(db, background, req, "Your quote has been updated", msg)
+        if q.invoice is not None:
+            notification.attachments = json.dumps(["invoice"])
+        elif q.status == "sent":
+            notification.attachments = json.dumps(["options_full" if req.report_paid_at else "options_preview"])
+    db.commit()
+    return _admin_view(req, get_cny_usd()["rate"])
+
+
+@router.patch("/customers/{user_id}", response_model=CustomerBrief)
+def edit_customer(user_id: int, body: CustomerEditIn, db: Session = Depends(get_db)):
+    """Fix a customer's name, email, phone or address. Future emails go to the new address."""
+    user = db.get(User, user_id)
+    if user is None:
+        raise HTTPException(404, "Customer not found")
+    data = {k: (v.strip() if isinstance(v, str) else v) for k, v in body.model_dump(exclude_unset=True).items()
+            if v is not None}
+    if "email" in data and data["email"] != user.email:
+        if db.scalar(select(User).where(User.email == data["email"], User.id != user.id)) is not None:
+            raise HTTPException(400, "Another account already uses that email")
+        # Drafts still waiting for review go to the new address too.
+        for n in db.scalars(select(Notification).where(Notification.user_id == user.id,
+                                                       Notification.status == "draft")):
+            n.to_address = data["email"]
+    for k, v in data.items():
+        setattr(user, k, v)
+    db.commit()
+    return CustomerBrief.model_validate(user)
 
 
 @router.post("/invoices/{invoice_id}/mark-paid", response_model=InvoiceOut)
