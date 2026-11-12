@@ -38,7 +38,6 @@ export function MarketingShell({ children, embedded = false }: { children: React
             <Link href="/#why" className="hover:text-[#0f172a]">Why AIMORO</Link>
             <Link href="/branding" className="hover:text-[#0f172a]">Branding</Link>
             <Link href="/#faq" className="hover:text-[#0f172a]">FAQ</Link>
-            <a href={`mailto:${CONTACT_EMAIL}`} className="hover:text-[#0f172a]">Contact</a>
           </nav>
           <div className="flex items-center gap-2">
             {user ? (
@@ -47,7 +46,7 @@ export function MarketingShell({ children, embedded = false }: { children: React
                   className="hidden sm:inline-flex items-center rounded-xl text-sm font-semibold px-4 py-2.5 text-slate-700 hover:bg-slate-100 transition-colors">
                   Log out
                 </button>
-                <Link href={accountHref} className="inline-flex items-center rounded-xl bg-[#c40000] hover:bg-[#950000] text-white text-sm font-semibold px-4 py-2.5 transition-colors">
+                <Link href={accountHref} className="inline-flex items-center whitespace-nowrap rounded-xl bg-[#c40000] hover:bg-[#950000] text-white text-sm font-semibold px-4 py-2.5 transition-colors">
                   {user.role === 'admin' ? 'Request queue' : 'My requests'}
                 </Link>
               </>
@@ -55,7 +54,7 @@ export function MarketingShell({ children, embedded = false }: { children: React
               <>
                 <Link href="/login" className="hidden sm:inline-flex items-center rounded-xl text-sm font-semibold px-4 py-2.5 text-slate-700 hover:bg-slate-100 transition-colors">Log in</Link>
                 <Link href="/signup" className="hidden lg:inline-flex items-center rounded-xl border border-slate-200 text-sm font-semibold px-4 py-2.5 text-slate-700 hover:bg-slate-50 transition-colors">Sign up</Link>
-                <Link href="/signup" className="inline-flex items-center rounded-xl bg-[#c40000] hover:bg-[#950000] text-white text-sm font-semibold px-4 py-2.5 transition-colors">Start a request</Link>
+                <Link href="/signup" className="inline-flex items-center whitespace-nowrap rounded-xl bg-[#c40000] hover:bg-[#950000] text-white text-sm font-semibold px-4 py-2.5 transition-colors"><span className="sm:hidden">Get a quote</span><span className="hidden sm:inline">Start a request</span></Link>
               </>
             )}
             <button type="button" onClick={() => setMenuOpen(o => !o)} aria-expanded={menuOpen} aria-label="Menu"
@@ -73,7 +72,6 @@ export function MarketingShell({ children, embedded = false }: { children: React
                 <li key={href}>
                   <Link href={href} onClick={() => setMenuOpen(false)} className="flex items-center justify-between py-3 text-base font-semibold text-slate-800">
                     {label}
-                    {label === 'Branding' && <span className="text-[10px] font-bold uppercase tracking-wider text-[#c40000] bg-[#c40000]/10 rounded-full px-2 py-0.5">New</span>}
                   </Link>
                 </li>
               ))}
@@ -87,6 +85,15 @@ export function MarketingShell({ children, embedded = false }: { children: React
       </header>
 
       <main className="flex-1">{children}</main>
+
+      {!embedded && (
+        <a href={whatsappLink(CONTACT_WHATSAPP, 'Hi AIMORO, I’d like a quote.')} target="_blank" rel="noopener noreferrer"
+          aria-label="Chat with AIMORO on WhatsApp"
+          className="fixed z-40 right-4 bottom-[calc(1rem+env(safe-area-inset-bottom))] sm:right-6 sm:bottom-6 inline-flex items-center gap-2 rounded-full bg-[#25D366] hover:bg-[#1ebe5b] text-white font-semibold text-sm p-3.5 sm:pl-3.5 sm:pr-4 sm:py-3 shadow-[0_10px_28px_rgba(0,0,0,0.22)] transition-colors">
+          <svg className="w-6 h-6 sm:w-5 sm:h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.5 7.2L4 20l1-4.5A8 8 0 1 1 21 12Z" /></svg>
+          <span className="hidden sm:inline">WhatsApp</span>
+        </a>
+      )}
 
       <footer className="bg-[#0f172a] text-slate-300">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-14 grid gap-10 sm:grid-cols-2 lg:grid-cols-4">

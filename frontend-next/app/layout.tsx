@@ -4,7 +4,7 @@ import { AppShell } from '@/components/AppShell'
 import { ThemeProvider } from '@/components/ThemeProvider'
 import { AuthProvider } from '@/components/AuthProvider'
 
-const DESCRIPTION = 'Products sourced from China, delivered to your door in The Bahamas. Tell us what you want, get one all-in price, and we handle the rest.'
+const DESCRIPTION = 'Products sourced from China, delivered to your door in The Bahamas. Bulk, branded or just one item: tell us what you need, get one clear quote, and we handle the rest.'
 
 export const metadata: Metadata = {
   metadataBase: new URL('https://aimoro.co'),

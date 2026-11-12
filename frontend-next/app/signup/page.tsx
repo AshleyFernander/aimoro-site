@@ -35,7 +35,7 @@ function SignupForm() {
   return (
     <div className="max-w-md mx-auto px-4 py-10">
       <h1 className="text-2xl font-extrabold text-slate-900 mb-1">Create your account</h1>
-      <p className="text-sm text-slate-500 mb-6">Tell us what you want from China. We find it, quote one all-in price, and deliver it to your door in The Bahamas, the US or Canada.</p>
+      <p className="text-sm text-slate-500 mb-6">Tell us what you want from China. We find it, send you one clear quote, and deliver it to your door in The Bahamas, the US or Canada.</p>
       <Card>
         <form onSubmit={submit} className="space-y-4">
           <div>

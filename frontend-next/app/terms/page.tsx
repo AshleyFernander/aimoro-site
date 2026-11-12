@@ -26,7 +26,8 @@ export default function TermsPage() {
       <section>
         <h2>3. Quotes and prices</h2>
         <ul>
-          <li>Each quote is one all-in price that shows the product cost, shipping to your address and our service fee.</li>
+          <li>Each quote shows the product cost, shipping to your address and our service fee, which is a percentage of the product cost.</li>
+          <li>Bahamas customs duty and VAT are not included in the quote. You pay them separately when your order clears customs.</li>
           <li>Quotes are valid for 7 days. Supplier prices and exchange rates change, so after that we may send an updated quote.</li>
           <li>Nothing is ordered until you approve a quote and your payment is received.</li>
         </ul>
@@ -49,7 +50,7 @@ export default function TermsPage() {
       <section>
         <h2>6. Delivery</h2>
         <ul>
-          <li>Delivery times in your quote are estimates. Shipping can be delayed by carriers, weather or other events outside our control.</li>
+          <li>As a guide, air freight takes about 2 to 3 weeks and sea freight about 6 to 8 weeks. Delivery times are estimates. Shipping can be delayed by carriers, weather or other events outside our control.</li>
           <li>Make sure your delivery address is correct. If an order cannot be delivered because the address is wrong or nobody is available, extra delivery costs may apply.</li>
           <li>Your order is considered delivered once it reaches the address on your request.</li>
         </ul>
@@ -57,7 +58,7 @@ export default function TermsPage() {
 
       <section>
         <h2>7. Problems with an order</h2>
-        <p>We check orders at our warehouse before they ship. If your item arrives damaged, is not what you requested, or is missing, email us at <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a> within 7 days of delivery with your request number and photos. We will review it and work with you on a fair solution, such as a replacement, a partial refund or a full refund.</p>
+        <p>We check orders at our warehouse before they ship. If your item arrives damaged, is not what you requested, or is missing, email us at <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a> within 7 days of delivery with your request number and photos. We will review it and replace the item or refund the item cost.</p>
       </section>
 
       <section>
